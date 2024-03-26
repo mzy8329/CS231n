@@ -136,3 +136,112 @@ class TwoLayerNet(object):
         ############################################################################
 
         return loss, grads
+
+
+class FullyConnectedNet(object):
+    """Class for a multi-layer fully connected neural network.
+
+    Network contains an arbitrary number of hidden layers, ReLU nonlinearities,
+    and a softmax loss function. This will also implement dropout and batch/layer
+    normalization as options. For a network with L layers, the architecture will be
+
+    {affine - [batch/layer norm] - relu - [dropout]} x (L - 1) - affine - softmax
+
+    where batch/layer normalization and dropout are optional and the {...} block is
+    repeated L - 1 times.
+
+    Learnable parameters are stored in the self.params dictionary and will be learned
+    using the Solver class.
+    """
+
+    def __init__(
+        self,
+        hidden_dims,
+        input_dim=3 * 32 * 32,
+        num_classes=10,
+        dropout_keep_ratio=1,
+        normalization=None,
+        reg=0.0,
+        weight_scale=1e-2,
+        dtype=np.float32,
+        seed=None,
+    ):
+        """Initialize a new FullyConnectedNet.
+
+        Inputs:
+        - hidden_dims: A list of integers giving the size of each hidden layer.
+        - input_dim: An integer giving the size of the input.
+        - num_classes: An integer giving the number of classes to classify.
+        - dropout_keep_ratio: Scalar between 0 and 1 giving dropout strength.
+            If dropout_keep_ratio=1 then the network should not use dropout at all.
+        - normalization: What type of normalization the network should use. Valid values
+            are "batchnorm", "layernorm", or None for no normalization (the default).
+        - reg: Scalar giving L2 regularization strength.
+        - weight_scale: Scalar giving the standard deviation for random
+            initialization of the weights.
+        - dtype: A numpy datatype object; all computations will be performed using
+            this datatype. float32 is faster but less accurate, so you should use
+            float32 for numeric gradient checking.
+        - seed: If not None, then pass this random seed to the dropout layers.
+            This will make the dropout layers deteriminstic so we can gradient check the model.
+        """
+        self.normalization = normalization
+        self.use_dropout = dropout_keep_ratio != 1
+        self.reg = reg
+        self.num_layers = 1 + len(hidden_dims)
+        self.dtype = dtype
+        self.params = {}
+
+        ############################################################################
+        # TODO: Initialize the parameters of the network, storing all values in    #
+        # the self.params dictionary. Store weights and biases for the first layer #
+        # in W1 and b1; for the second layer use W2 and b2, etc. Weights should be #
+        # initialized from a normal distribution centered at 0 with standard       #
+        # deviation equal to weight_scale. Biases should be initialized to zero.   #
+        #                                                                          #
+        # When using batch normalization, store scale and shift parameters for the #
+        # first layer in gamma1 and beta1; for the second layer use gamma2 and     #
+        # beta2, etc. Scale parameters should be initialized to ones and shift     #
+        # parameters should be initialized to zeros.                               #
+        ############################################################################
+
+        weight_bound = 1.7321*weight_scale
+        if(len(hidden_dims) > 0):
+            weights = [np.random.random(-weight_bound, weight_bound, (input_dim, hidden_dims[0])).astype(np.float32)]
+            biases = [np.zeros(1, hidden_dims[0], dtype=np.float32)]
+            
+            scales = [np.ones(input_dim, hidden_dims[0], dtype=np.float32)]
+            shifts = [np.zeros(1, hidden_dims[0], dtype=np.float32)]
+
+            if(len(hidden_dims) > 1):
+                for layer_index in range(1, self.num_layers-1):
+                    weights.append(np.random.random(-weight_bound, weight_bound, (hidden_dims[layer_index-1], hidden_dims[layer_index])).astype(np.float32))
+                    biases.append(np.zeros(1, hidden_dims[layer_index], dtype=np.float32))
+                    
+                    scales.append(np.ones(input_dim, hidden_dims[0], dtype=np.float32))
+                    shifts.append(np.zeros(1, hidden_dims[0], dtype=np.float32))
+                    
+            weights.append(np.random.random(-weight_bound, weight_bound, (hidden_dims[-1], num_classes)).astype(np.float32))
+            biases.append(np.zeros(1, num_classes, dtype=np.float32))
+            
+            # scales.append(np.ones(hidden_dims[-1], num_classes, dtype=np.float32))
+            # shifts.append(np.zeros(1, num_classes, dtype=np.float32))
+        
+        else:
+            weights = [np.random.random(-weight_bound, weight_bound, (input_dim, num_classes), dtype=np.float32)]
+            biases = [np.zeros(1, num_classes, dtype=np.float32)]
+            
+            # scales = [np.ones(input_dim, num_classes, dtype=np.float32)]
+            # shifts = [np.zeros(1, num_classes, dtype=np.float32)]
+            
+        self.params['weights'] = weights
+        self.params['biases'] = biases
+    
+    def loss(self, x, y = None):
+        cache = []
+        
+        for layer_index in range(self.num_layers):
+            x, cache_temp = affine_forward(x=x, w=self.params['weight'][layer_index], b=self.params['biases'][layer_index])
+            cache_temp.append(cache_temp)
+            
+        
