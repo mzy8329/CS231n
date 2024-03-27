@@ -191,6 +191,8 @@ class FullyConnectedNet(object):
         self.num_layers = 1 + len(hidden_dims)
         self.dtype = dtype
         self.params = {}
+        
+        self.bn_params = []
 
         ############################################################################
         # TODO: Initialize the parameters of the network, storing all values in    #
@@ -206,42 +208,130 @@ class FullyConnectedNet(object):
         ############################################################################
 
         weight_bound = 1.7321*weight_scale
-        if(len(hidden_dims) > 0):
-            weights = [np.random.random(-weight_bound, weight_bound, (input_dim, hidden_dims[0])).astype(np.float32)]
-            biases = [np.zeros(1, hidden_dims[0], dtype=np.float32)]
+        
+        if(len(hidden_dims) > 0):            
+            weights = [np.random.uniform(-weight_bound, weight_bound, (input_dim, hidden_dims[0])).astype(np.float32)]
+            biases = [np.zeros((1, hidden_dims[0]), dtype=np.float32)]
             
-            scales = [np.ones(input_dim, hidden_dims[0], dtype=np.float32)]
-            shifts = [np.zeros(1, hidden_dims[0], dtype=np.float32)]
+            scales = [np.ones((hidden_dims[0], hidden_dims[0]), dtype=np.float32)]
+            shifts = [np.zeros((1, hidden_dims[0]), dtype=np.float32)]
+            
+            self.bn_params.append({})
 
             if(len(hidden_dims) > 1):
                 for layer_index in range(1, self.num_layers-1):
-                    weights.append(np.random.random(-weight_bound, weight_bound, (hidden_dims[layer_index-1], hidden_dims[layer_index])).astype(np.float32))
-                    biases.append(np.zeros(1, hidden_dims[layer_index], dtype=np.float32))
+                    weights.append(np.random.uniform(-weight_bound, weight_bound, (hidden_dims[layer_index-1], hidden_dims[layer_index])).astype(np.float32))
+                    biases.append(np.zeros((1, hidden_dims[layer_index]), dtype=np.float32))
                     
-                    scales.append(np.ones(input_dim, hidden_dims[0], dtype=np.float32))
-                    shifts.append(np.zeros(1, hidden_dims[0], dtype=np.float32))
+                    scales.append(np.ones((hidden_dims[layer_index], hidden_dims[layer_index]), dtype=np.float32))
+                    shifts.append(np.zeros((1, hidden_dims[layer_index]), dtype=np.float32))
                     
-            weights.append(np.random.random(-weight_bound, weight_bound, (hidden_dims[-1], num_classes)).astype(np.float32))
-            biases.append(np.zeros(1, num_classes, dtype=np.float32))
+                    self.bn_params.append({})
+                    
+            weights.append(np.random.uniform(-weight_bound, weight_bound, (hidden_dims[-1], num_classes)).astype(np.float32))
+            biases.append(np.zeros((1, num_classes), dtype=np.float32))
             
             # scales.append(np.ones(hidden_dims[-1], num_classes, dtype=np.float32))
             # shifts.append(np.zeros(1, num_classes, dtype=np.float32))
         
         else:
             weights = [np.random.random(-weight_bound, weight_bound, (input_dim, num_classes), dtype=np.float32)]
-            biases = [np.zeros(1, num_classes, dtype=np.float32)]
+            biases = [np.zeros((1, num_classes), dtype=np.float32)]
             
             # scales = [np.ones(input_dim, num_classes, dtype=np.float32)]
             # shifts = [np.zeros(1, num_classes, dtype=np.float32)]
             
         self.params['weights'] = weights
         self.params['biases'] = biases
+        
+        self.params['scales'] = scales
+        self.params['shifts'] = shifts
     
     def loss(self, x, y = None):
-        cache = []
+        cache_fc = []
+        cache_bn = []
+        cache_relu = []
+        cache_drop = []
         
-        for layer_index in range(self.num_layers):
-            x, cache_temp = affine_forward(x=x, w=self.params['weight'][layer_index], b=self.params['biases'][layer_index])
-            cache_temp.append(cache_temp)
+        dropout_param = {
+            'p': 0.9,
+        }
+        if y is None:
+            for i in range(self.num_layers - 1):
+                self.bn_params[i]["mode"] = "test"
+                self.bn_params[i]["eps"] = 1e-5
+                self.bn_params[i]["momentum"] = 0.9
+                
+            dropout_param["mode"] = "test"
+        else:
+            for i in range(self.num_layers - 1):
+                self.bn_params[i]["mode"] = "train"
+                self.bn_params[i]["eps"] = 1e-5
+                self.bn_params[i]["momentum"] = 0.9
+            dropout_param["mode"] = "train"
+
+        
+        for layer_index in range(self.num_layers - 1):   
+            x, cache_temp = affine_forward(x=x, w=self.params['weights'][layer_index], b=self.params['biases'][layer_index])
+            cache_fc.append(cache_temp)
             
+            x, cache_temp = batchnorm_forward(x=x, gamma=self.params['scales'][layer_index], beta=self.params['shifts'][layer_index], bn_param=self.bn_params[layer_index])
+            cache_bn.append(cache_temp)
+            
+            x, cache_temp = relu_forward(x=x)
+            cache_relu.append(cache_temp)
+            
+            x, cache_temp = dropout_forward(x, dropout_param)
+            cache_drop.append(cache_temp)
+            
+        x, cache_temp = affine_forward(x=x, w=self.params['weights'][-1], b=self.params['biases'][-1])
+        cache_fc.append(cache_temp)
+        
+        
+        scores = x
+        
+        if y is None:
+            return scores
+
+        loss, grads = 0, {}
+        grads_weight = []
+        grads_biases = []
+        grads_scales = []
+        grads_shifts = []
+        
+        loss, dx = softmax_loss(x, y)
+
+        loss += 0.5 * self.reg * np.sum(np.sum(self.params['weights'][-1] * self.params['weights'][-1]))
+        dx, dw, db = affine_backward(dx, cache_fc[-1])
+        grads_weight.append(dw)
+        grads_biases.append(db)
+        
+        for layer_index in range(self.num_layers - 2, 0, -1):    
+            loss += 0.5 * self.reg * np.sum(np.sum(self.params['weights'][layer_index] * self.params['weights'][layer_index]))
+            
+            dx = dropout_backward(dx, cache_drop[layer_index])
+            dx = relu_backward(dx, cache_relu[layer_index])
+            dx, dgamma, dbeta = batchnorm_backward(dx, cache_bn[layer_index])
+            grads_scales.append(dgamma)
+            grads_shifts.append(dbeta)
+            
+            dx, dw, db = affine_backward(dx, cache_fc[layer_index])
+            dw += self.reg * self.params['weights'][layer_index]
+            grads_weight.append(dw)
+            grads_biases.append(db)
+            
+            
+            # dx, dw, db = affine_backward(dx, cache2)
+            # grads['W2'] = dw + self.reg * self.params['W2']
+            # grads['b2'] = db
+            # dx, dw, db = affine_relu_backward(dx, cache1)
+            # grads['W1'] = dw + self.reg * self.params['W1']
+            # grads['b1'] = db
+        
+        grads['weights'] = grads_weight
+        grads['biases'] = grads_biases
+        grads['scales'] = grads_scales
+        grads['shifts'] = grads_shifts
+
+        return loss, grads
         
